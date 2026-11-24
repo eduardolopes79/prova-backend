@@ -1,7 +1,7 @@
 {
   "name": "tarefas-backend",
-  "version": "1.0.0",
-  "description": "API de lista de tarefas (CRUD) com Node.js e Express",
+  "version": "2.0.0",
+  "description": "API de lista de tarefas (CRUD) com Node.js, Express e Supabase",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
@@ -10,6 +10,7 @@
     "node": ">=18"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.45.0",
     "cors": "^2.8.5",
     "express": "^4.19.2"
   }
