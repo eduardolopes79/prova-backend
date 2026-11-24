@@ -1,30 +1,30 @@
-// Backend da Lista de Tarefas — Node.js + Express
-// Os dados ficam em memória: ao reiniciar (ou em um "cold start" da Vercel),
-// as duas tarefas de exemplo voltam automaticamente.
+// Backend da Lista de Tarefas — Node.js + Express + Supabase (Postgres)
+// As tarefas agora ficam salvas de verdade no banco de dados.
 
 const express = require("express");
 const cors = require("cors");
+const { createClient } = require("@supabase/supabase-js");
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-// ---------- "Banco de dados" em memória com 2 exemplos ----------
-let tasks = [
-  {
-    id: 1,
-    title: "Bem-vindo! Marque esta tarefa como concluída",
-    done: false,
-    createdAt: new Date().toISOString(),
-  },
-  {
-    id: 2,
-    title: "Edite ou exclua esta tarefa de exemplo",
-    done: false,
-    createdAt: new Date().toISOString(),
-  },
-];
-let nextId = 3;
+// ---------- Conexão com o Supabase (variáveis de ambiente) ----------
+const { SUPABASE_URL, SUPABASE_SERVICE_KEY } = process.env;
+const supabase =
+  SUPABASE_URL && SUPABASE_SERVICE_KEY
+    ? createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY, { auth: { persistSession: false } })
+    : null;
+
+// Se as variáveis não estiverem configuradas, avisa de forma clara
+app.use("/api", (req, res, next) => {
+  if (!supabase) {
+    return res.status(500).json({
+      error: "Banco de dados não configurado. Defina SUPABASE_URL e SUPABASE_SERVICE_KEY.",
+    });
+  }
+  next();
+});
 
 // ---------- Validação ----------
 function validateTitle(title) {
@@ -37,55 +37,74 @@ function validateTitle(title) {
   return null;
 }
 
+const dbError = (res, error) => {
+  console.error(error);
+  return res.status(500).json({ error: "Erro ao acessar o banco de dados." });
+};
+
 // ---------- Rotas ----------
 app.get("/", (req, res) => {
-  res.json({ status: "ok", message: "API da Lista de Tarefas funcionando." });
+  res.json({ status: "ok", message: "API da Lista de Tarefas funcionando.", database: Boolean(supabase) });
 });
 
 // READ — listar
-app.get("/api/tasks", (req, res) => {
-  res.json(tasks);
+app.get("/api/tasks", async (req, res) => {
+  const { data, error } = await supabase.from("tasks").select("*").order("id", { ascending: true });
+  if (error) return dbError(res, error);
+  res.json(data);
 });
 
 // CREATE — criar
-app.post("/api/tasks", (req, res) => {
-  const error = validateTitle(req.body.title);
-  if (error) return res.status(400).json({ error });
+app.post("/api/tasks", async (req, res) => {
+  const invalid = validateTitle(req.body.title);
+  if (invalid) return res.status(400).json({ error: invalid });
 
-  const task = {
-    id: nextId++,
-    title: req.body.title.trim(),
-    done: false,
-    createdAt: new Date().toISOString(),
-  };
-  tasks.push(task);
-  res.status(201).json(task);
+  const { data, error } = await supabase
+    .from("tasks")
+    .insert({ title: req.body.title.trim(), done: false })
+    .select()
+    .single();
+  if (error) return dbError(res, error);
+  res.status(201).json(data);
 });
 
 // UPDATE — editar título e/ou status
-app.put("/api/tasks/:id", (req, res) => {
-  const task = tasks.find((t) => t.id === Number(req.params.id));
-  if (!task) return res.status(404).json({ error: "Tarefa não encontrada." });
+app.put("/api/tasks/:id", async (req, res) => {
+  const changes = {};
 
   if (req.body.title !== undefined) {
-    const error = validateTitle(req.body.title);
-    if (error) return res.status(400).json({ error });
-    task.title = req.body.title.trim();
+    const invalid = validateTitle(req.body.title);
+    if (invalid) return res.status(400).json({ error: invalid });
+    changes.title = req.body.title.trim();
   }
-  if (req.body.done !== undefined) {
-    task.done = Boolean(req.body.done);
+  if (req.body.done !== undefined) changes.done = Boolean(req.body.done);
+
+  if (Object.keys(changes).length === 0) {
+    return res.status(400).json({ error: "Nada para atualizar." });
   }
-  res.json(task);
+
+  const { data, error } = await supabase
+    .from("tasks")
+    .update(changes)
+    .eq("id", Number(req.params.id))
+    .select()
+    .maybeSingle();
+  if (error) return dbError(res, error);
+  if (!data) return res.status(404).json({ error: "Tarefa não encontrada." });
+  res.json(data);
 });
 
 // DELETE — excluir
-app.delete("/api/tasks/:id", (req, res) => {
-  const index = tasks.findIndex((t) => t.id === Number(req.params.id));
-  if (index === -1) {
-    return res.status(404).json({ error: "Tarefa não encontrada." });
-  }
-  const [removed] = tasks.splice(index, 1);
-  res.json(removed);
+app.delete("/api/tasks/:id", async (req, res) => {
+  const { data, error } = await supabase
+    .from("tasks")
+    .delete()
+    .eq("id", Number(req.params.id))
+    .select()
+    .maybeSingle();
+  if (error) return dbError(res, error);
+  if (!data) return res.status(404).json({ error: "Tarefa não encontrada." });
+  res.json(data);
 });
 
 // ---------- Inicialização ----------
